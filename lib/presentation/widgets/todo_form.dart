@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
-import '../../domain/entities/todo.dart';
 import '../../core/providers/todo_provider.dart';
-import 'category_manager.dart';
+import '../../domain/entities/todo.dart';
+import '../widgets/category_manager.dart';
 
-class TodoForm extends StatelessWidget {
+class TodoForm extends StatefulWidget {
   final TextEditingController titleController;
   final TextEditingController descriptionController;
   final DateTime? selectedDueDate;
@@ -14,12 +13,18 @@ class TodoForm extends StatelessWidget {
   final RecurrenceType selectedRecurrence;
   final DateTime? selectedRecurrenceEndDate;
   final bool isTemplate;
-  final Function(DateTime?) onDueDateChanged;
-  final Function(String) onCategoryChanged;
-  final Function(int) onPriorityChanged;
-  final Function(RecurrenceType) onRecurrenceChanged;
-  final Function(DateTime?) onRecurrenceEndDateChanged;
-  final Function(bool) onTemplateChanged;
+  final List<int> weeklyRecurrenceDays;
+  final bool enableReminders;
+  final List<SubTask> subTasks;
+  final ValueChanged<DateTime?> onDueDateChanged;
+  final ValueChanged<String> onCategoryChanged;
+  final ValueChanged<int> onPriorityChanged;
+  final ValueChanged<RecurrenceType> onRecurrenceChanged;
+  final ValueChanged<DateTime?> onRecurrenceEndDateChanged;
+  final ValueChanged<bool> onTemplateChanged;
+  final ValueChanged<List<int>> onWeeklyRecurrenceDaysChanged;
+  final ValueChanged<bool> onEnableRemindersChanged;
+  final ValueChanged<List<SubTask>> onSubTasksChanged;
 
   const TodoForm({
     Key? key,
@@ -31,80 +36,91 @@ class TodoForm extends StatelessWidget {
     required this.selectedRecurrence,
     required this.selectedRecurrenceEndDate,
     required this.isTemplate,
+    required this.weeklyRecurrenceDays,
+    required this.enableReminders,
+    required this.subTasks,
     required this.onDueDateChanged,
     required this.onCategoryChanged,
     required this.onPriorityChanged,
     required this.onRecurrenceChanged,
     required this.onRecurrenceEndDateChanged,
     required this.onTemplateChanged,
+    required this.onWeeklyRecurrenceDaysChanged,
+    required this.onEnableRemindersChanged,
+    required this.onSubTasksChanged,
   }) : super(key: key);
 
-  void _showCategoryManager(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => const CategoryManager(),
-    );
-  }
+  @override
+  _TodoFormState createState() => _TodoFormState();
+}
 
-  // Helper method to get category icon
-  Icon _getCategoryIcon(String category) {
-    switch (category) {
-      case 'Work':
-        return const Icon(Icons.work, size: 18, color: Colors.blue);
-      case 'Shopping':
-        return const Icon(Icons.shopping_cart, size: 18, color: Colors.orange);
-      case 'Health':
-        return const Icon(Icons.favorite, size: 18, color: Colors.red);
-      case 'Personal':
-        return const Icon(Icons.person, size: 18, color: Colors.green);
-      case 'Other':
-        return const Icon(Icons.category, size: 18, color: Colors.grey);
-      default:
-        return const Icon(Icons.category, size: 18, color: Colors.grey);
-    }
-  }
+class _TodoFormState extends State<TodoForm> {
+  final TextEditingController _subTaskController = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
-    final categories = Provider.of<TodoProvider>(context, listen: false).categories;
-
-    return ConstrainedBox(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.7,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: widget.titleController,
+          decoration: const InputDecoration(
+            labelText: 'Title *',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: widget.descriptionController,
+          decoration: const InputDecoration(
+            labelText: 'Description',
+            border: OutlineInputBorder(),
+          ),
+          maxLines: 3,
+        ),
+        const SizedBox(height: 16),
+        Row(
           children: [
-            TextField(
-              controller: titleController,
-              decoration: const InputDecoration(
-                labelText: 'Title *',
-                border: OutlineInputBorder(),
+            Expanded(
+              child: TextButton(
+                onPressed: () async {
+                  final pickedDate = await showDatePicker(
+                    context: context,
+                    initialDate: widget.selectedDueDate ?? DateTime.now(),
+                    firstDate: DateTime.now(),
+                    lastDate: DateTime(2100),
+                  );
+                  if (pickedDate != null) {
+                    widget.onDueDateChanged(pickedDate);
+                  }
+                },
+                child: Text(
+                  widget.selectedDueDate != null
+                      ? 'Due: ${_formatDate(widget.selectedDueDate!)}'
+                      : 'Set Due Date',
+                ),
               ),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: descriptionController,
-              decoration: const InputDecoration(
-                labelText: 'Description',
-                border: OutlineInputBorder(),
-              ),
-              maxLines: 2,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: DropdownButtonFormField<String>(
-                    value: selectedCategory,
-                    items: categories.map((String category) {
-                      return DropdownMenuItem<String>(
+          ],
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: Consumer<TodoProvider>(
+                builder: (context, todoProvider, child) {
+                  return DropdownButtonFormField<String>(
+                    value: widget.selectedCategory,
+                    items: todoProvider.categories.map((category) {
+                      return DropdownMenuItem(
                         value: category,
                         child: Row(
                           children: [
-                            _getCategoryIcon(category),
+                            Icon(
+                              todoProvider.categoryIcons[category] ?? _getDefaultIcon(category),
+                              color: todoProvider.categoryColors[category] ?? _getDefaultColor(category),
+                              size: 20,
+                            ),
                             const SizedBox(width: 8),
                             Text(category),
                           ],
@@ -113,145 +129,320 @@ class TodoForm extends StatelessWidget {
                     }).toList(),
                     onChanged: (String? newValue) {
                       if (newValue != null) {
-                        onCategoryChanged(newValue);
+                        widget.onCategoryChanged(newValue);
                       }
                     },
                     decoration: const InputDecoration(
                       labelText: 'Category',
                       border: OutlineInputBorder(),
-                      isDense: true,
                     ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 1,
-                  child: IconButton(
-                    icon: const Icon(Icons.settings, size: 20),
-                    onPressed: () => _showCategoryManager(context),
-                    tooltip: 'Manage Categories',
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 2,
-                  child: DropdownButtonFormField<int>(
-                    value: selectedPriority,
-                    items: const [
-                      DropdownMenuItem(value: 0, child: Text('Low', style: TextStyle(color: Colors.green))),
-                      DropdownMenuItem(value: 1, child: Text('Medium', style: TextStyle(color: Colors.orange))),
-                      DropdownMenuItem(value: 2, child: Text('High', style: TextStyle(color: Colors.red))),
-                    ],
-                    onChanged: (int? newValue) {
-                      if (newValue != null) {
-                        onPriorityChanged(newValue);
-                      }
-                    },
-                    decoration: const InputDecoration(
-                      labelText: 'Priority',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                ),
-              ],
+                  );
+                },
+              ),
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    selectedDueDate == null
-                        ? 'No due date'
-                        : 'Due: ${DateFormat.yMd().format(selectedDueDate!)}',
-                    style: const TextStyle(fontSize: 14),
-                  ),
-                ),
-                TextButton(
-                  onPressed: () async {
-                    final DateTime? picked = await showDatePicker(
-                      context: context,
-                      initialDate: DateTime.now(),
-                      firstDate: DateTime.now(),
-                      lastDate: DateTime(2100),
-                    );
-                    onDueDateChanged(picked);
+            const SizedBox(width: 8),
+            // ADD THIS BUTTON TO MANAGE CATEGORIES:
+            IconButton(
+              icon: const Icon(Icons.settings, size: 24),
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (BuildContext context) {
+                    return const CategoryManager();
                   },
-                  child: const Text('Set Due Date', style: TextStyle(fontSize: 12)),
-                ),
-                if (selectedDueDate != null)
-                  TextButton(
-                    onPressed: () {
-                      onDueDateChanged(null);
-                    },
-                    child: const Text('Clear', style: TextStyle(fontSize: 12)),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<RecurrenceType>(
-              value: selectedRecurrence,
-              items: const [
-                DropdownMenuItem(value: RecurrenceType.none, child: Text('No Recurrence')),
-                DropdownMenuItem(value: RecurrenceType.daily, child: Text('Daily')),
-                DropdownMenuItem(value: RecurrenceType.weekly, child: Text('Weekly')),
-                DropdownMenuItem(value: RecurrenceType.monthly, child: Text('Monthly')),
-              ],
-              onChanged: (RecurrenceType? newValue) {
-                if (newValue != null) {
-                  onRecurrenceChanged(newValue);
-                }
+                );
               },
-              decoration: const InputDecoration(
-                labelText: 'Recurrence',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
+              tooltip: 'Manage Categories',
             ),
-            if (selectedRecurrence != RecurrenceType.none) ...[
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      selectedRecurrenceEndDate == null
-                          ? 'Recur forever'
-                          : 'Until: ${DateFormat.yMd().format(selectedRecurrenceEndDate!)}',
-                      style: const TextStyle(fontSize: 14),
+            const SizedBox(width: 16),
+            Expanded(
+              child: DropdownButtonFormField<int>(
+                initialValue: widget.selectedPriority,
+                items: const [
+                  DropdownMenuItem(
+                    value: 0,
+                    child: Row(
+                      children: [
+                        Icon(Icons.arrow_downward, size: 16, color: Colors.green),
+                        SizedBox(width: 4),
+                        Text('Low'),
+                      ],
                     ),
                   ),
-                  TextButton(
-                    onPressed: () async {
-                      final DateTime? picked = await showDatePicker(
-                        context: context,
-                        initialDate: DateTime.now().add(const Duration(days: 30)),
-                        firstDate: DateTime.now(),
-                        lastDate: DateTime(2100),
-                      );
-                      onRecurrenceEndDateChanged(picked);
-                    },
-                    child: const Text('Set End Date', style: TextStyle(fontSize: 12)),
-                  ),
-                  if (selectedRecurrenceEndDate != null)
-                    TextButton(
-                      onPressed: () {
-                        onRecurrenceEndDateChanged(null);
-                      },
-                      child: const Text('Clear', style: TextStyle(fontSize: 12)),
+                  DropdownMenuItem(
+                    value: 1,
+                    child: Row(
+                      children: [
+                        Icon(Icons.remove, size: 16, color: Colors.orange),
+                        SizedBox(width: 4),
+                        Text('Medium'),
+                      ],
                     ),
+                  ),
+                  DropdownMenuItem(
+                    value: 2,
+                    child: Row(
+                      children: [
+                        Icon(Icons.arrow_upward, size: 16, color: Colors.red),
+                        SizedBox(width: 4),
+                        Text('High'),
+                      ],
+                    ),
+                  ),
                 ],
+                onChanged: (int? newValue) {
+                  if (newValue != null) {
+                    widget.onPriorityChanged(newValue);
+                  }
+                },
+                decoration: const InputDecoration(
+                  labelText: 'Priority',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ],
-            const SizedBox(height: 12),
-            SwitchListTile(
-              title: const Text('Save as Template', style: TextStyle(fontSize: 14)),
-              value: isTemplate,
-              onChanged: onTemplateChanged,
-              contentPadding: EdgeInsets.zero,
             ),
           ],
         ),
-      ),
+        const SizedBox(height: 16),
+
+        // Recurrence Options
+        ExpansionTile(
+          title: const Text('Recurrence Options'),
+          initiallyExpanded: false,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
+              child: DropdownButtonFormField<RecurrenceType>(
+                initialValue: widget.selectedRecurrence,
+                items: const [
+                  DropdownMenuItem(
+                    value: RecurrenceType.none,
+                    child: Text('None'),
+                  ),
+                  DropdownMenuItem(
+                    value: RecurrenceType.daily,
+                    child: Text('Daily'),
+                  ),
+                  DropdownMenuItem(
+                    value: RecurrenceType.weekly,
+                    child: Text('Weekly'),
+                  ),
+                  DropdownMenuItem(
+                    value: RecurrenceType.monthly,
+                    child: Text('Monthly'),
+                  ),
+                ],
+                onChanged: (RecurrenceType? newValue) {
+                  if (newValue != null) {
+                    widget.onRecurrenceChanged(newValue);
+                  }
+                },
+                decoration: const InputDecoration(
+                  labelText: 'Recurrence Pattern',
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+                isExpanded: true,
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Weekly recurrence days (only show if weekly is selected)
+            if (widget.selectedRecurrence == RecurrenceType.weekly)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4.0),
+                    child: Text('Repeat on days:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: [
+                        for (int day = 1; day <= 7; day++)
+                          FilterChip(
+                            label: Text(_getDayName(day)),
+                            selected: widget.weeklyRecurrenceDays.contains(day),
+                            onSelected: (selected) {
+                              final newDays = List<int>.from(widget.weeklyRecurrenceDays);
+                              if (selected) {
+                                newDays.add(day);
+                              } else {
+                                newDays.remove(day);
+                              }
+                              widget.onWeeklyRecurrenceDaysChanged(newDays);
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+
+            // Recurrence end date
+            if (widget.selectedRecurrence != RecurrenceType.none)
+              Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    child: TextButton(
+                      onPressed: () async {
+                        final pickedDate = await showDatePicker(
+                          context: context,
+                          initialDate: widget.selectedRecurrenceEndDate ?? DateTime.now().add(const Duration(days: 30)),
+                          firstDate: DateTime.now(),
+                          lastDate: DateTime(2100),
+                        );
+                        if (pickedDate != null) {
+                          widget.onRecurrenceEndDateChanged(pickedDate);
+                        }
+                      },
+                      child: Text(
+                        widget.selectedRecurrenceEndDate != null
+                            ? 'Recur until: ${_formatDate(widget.selectedRecurrenceEndDate!)}'
+                            : 'Set Recurrence End Date',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+          ],
+        ),
+
+        const SizedBox(height: 16),
+
+        // Subtasks Section
+        ExpansionTile(
+          title: const Text('Subtasks'),
+          children: [
+            Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _subTaskController,
+                        decoration: const InputDecoration(
+                          labelText: 'Add subtask',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.add),
+                      onPressed: () {
+                        if (_subTaskController.text.isNotEmpty) {
+                          final newSubTasks = List<SubTask>.from(widget.subTasks);
+                          newSubTasks.add(SubTask(
+                            id: DateTime.now().millisecondsSinceEpoch.toString(),
+                            title: _subTaskController.text,
+                          ));
+                          widget.onSubTasksChanged(newSubTasks);
+                          _subTaskController.clear();
+                        }
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                if (widget.subTasks.isNotEmpty)
+                  Column(
+                    children: widget.subTasks.map((subTask) {
+                      return ListTile(
+                        leading: Checkbox(
+                          value: subTask.completed,
+                          onChanged: (value) {
+                            final newSubTasks = widget.subTasks.map((st) {
+                              if (st.id == subTask.id) {
+                                return st.copyWith(completed: value ?? false);
+                              }
+                              return st;
+                            }).toList();
+                            widget.onSubTasksChanged(newSubTasks);
+                          },
+                        ),
+                        title: Text(subTask.title),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () {
+                            final newSubTasks = widget.subTasks.where((st) => st.id != subTask.id).toList();
+                            widget.onSubTasksChanged(newSubTasks);
+                          },
+                        ),
+                      );
+                    }).toList(),
+                  ),
+              ],
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Checkbox(
+              value: widget.isTemplate,
+              onChanged: (value) {
+                widget.onTemplateChanged(value ?? false);
+              },
+            ),
+            const Text('Save as Template'),
+            const Spacer(),
+            Checkbox(
+              value: widget.enableReminders,
+              onChanged: (value) {
+                widget.onEnableRemindersChanged(value ?? false);
+              },
+            ),
+            const Text('Enable Reminders'),
+          ],
+        ),
+      ],
     );
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.month}/${date.day}/${date.year}';
+  }
+
+  IconData _getDefaultIcon(String category) {
+    switch (category.toLowerCase()) {
+      case 'personal': return Icons.person_outline;
+      case 'work': return Icons.work_outline;
+      case 'shopping': return Icons.shopping_basket;
+      case 'health': return Icons.favorite_border;
+      case 'other': return Icons.category;
+      default: return Icons.label_outline;
+    }
+  }
+
+  Color _getDefaultColor(String category) {
+    switch (category.toLowerCase()) {
+      case 'personal': return Colors.blue.shade700;
+      case 'work': return Colors.orange.shade700;
+      case 'shopping': return Colors.green.shade700;
+      case 'health': return Colors.red.shade700;
+      case 'other': return Colors.purple.shade700;
+      default: return Colors.blue.shade400;
+    }
+  }
+
+  String _getDayName(int day) {
+    switch (day) {
+      case 1: return 'Mon';
+      case 2: return 'Tue';
+      case 3: return 'Wed';
+      case 4: return 'Thu';
+      case 5: return 'Fri';
+      case 6: return 'Sat';
+      case 7: return 'Sun';
+      default: return '';
+    }
   }
 }

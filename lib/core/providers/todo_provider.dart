@@ -1,12 +1,10 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // Add this import
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../domain/entities/todo.dart';
-import '../../domain/repositories/todo_repository.dart';
-import '../../data/models/todo_model.dart';
 
 class TodoProvider with ChangeNotifier {
-  final TodoRepository todoRepository;
   List<Todo> _todos = [];
   List<String> _categories = ['Personal', 'Work', 'Shopping', 'Health', 'Other'];
   String _filterCategory = 'All';
@@ -15,8 +13,21 @@ class TodoProvider with ChangeNotifier {
   String _searchQuery = '';
   int? _filterPriority;
   DateTime? _filterDueDate;
+  final Map<String, IconData> _categoryIcons = {};
+  final Map<String, Color> _categoryColors = {};
 
-  TodoProvider({required this.todoRepository});
+  bool _isInitialized = false;
+
+  TodoProvider() {
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    await loadCategories(); // Load categories first
+    await loadTodos(); // Then load todos
+    _isInitialized = true;
+    notifyListeners();
+  }
 
   List<Todo> get todos => _todos;
   List<String> get categories => _categories;
@@ -26,6 +37,8 @@ class TodoProvider with ChangeNotifier {
   String get searchQuery => _searchQuery;
   int? get filterPriority => _filterPriority;
   DateTime? get filterDueDate => _filterDueDate;
+  Map<String, IconData> get categoryIcons => _categoryIcons;
+  Map<String, Color> get categoryColors => _categoryColors;
 
   List<Todo> get filteredTodos {
     List<Todo> filtered = _todos.where((todo) {
@@ -39,8 +52,10 @@ class TodoProvider with ChangeNotifier {
       final dueDateMatch = _filterDueDate == null ||
           (todo.dueDate != null &&
               _isSameDay(todo.dueDate!, _filterDueDate!));
+      final notTemplate = !todo.isTemplate;
 
-      return categoryMatch && completedMatch && searchMatch && priorityMatch && dueDateMatch;
+      return categoryMatch && completedMatch && searchMatch &&
+          priorityMatch && dueDateMatch && notTemplate;
     }).toList();
 
     if (_sortBy == 'Date Created') {
@@ -68,10 +83,45 @@ class TodoProvider with ChangeNotifier {
   }
 
   Future<void> loadTodos() async {
-    _todos = await todoRepository.getTodos();
-    await loadCategories();
+    final prefs = await SharedPreferences.getInstance();
+    final todosString = prefs.getString('todos');
+
+    if (todosString != null) {
+      try {
+        final List<dynamic> todosJson = json.decode(todosString);
+        _todos = todosJson.map((json) => _todoFromJson(json)).toList();
+      } catch (e) {
+        _todos = [];
+      }
+    }
+
     _checkRecurringTasks();
-    notifyListeners();
+    if (_isInitialized) notifyListeners();
+  }
+
+  Todo _todoFromJson(Map<String, dynamic> json) {
+    return Todo(
+      id: json['id'],
+      title: json['title'],
+      description: json['description'],
+      completed: json['completed'] ?? false,
+      dateCreated: DateTime.parse(json['dateCreated']),
+      dueDate: json['dueDate'] != null ? DateTime.parse(json['dueDate']) : null,
+      category: json['category'] ?? 'Personal',
+      priority: json['priority'] ?? 1,
+      recurrence: RecurrenceType.values[json['recurrence'] ?? 0],
+      recurrenceEndDate: json['recurrenceEndDate'] != null ? DateTime.parse(json['recurrenceEndDate']) : null,
+      isTemplate: json['isTemplate'] ?? false,
+      weeklyRecurrenceDays: List<int>.from(json['weeklyRecurrenceDays'] ?? []),
+      enableReminders: json['enableReminders'] ?? false,
+      subTasks: List<SubTask>.from((json['subTasks'] ?? []).map((st) => SubTask(
+        id: st['id'],
+        title: st['title'],
+        completed: st['completed'] ?? false,
+      ))),
+      completedAt: json['completedAt'] != null ? DateTime.parse(json['completedAt']) : null,
+      lastRecurrence: json['lastRecurrence'] != null ? DateTime.parse(json['lastRecurrence']) : null,
+    );
   }
 
   Future<void> _checkRecurringTasks() async {
@@ -113,89 +163,103 @@ class TodoProvider with ChangeNotifier {
   }
 
   Future<void> addTodo(Todo todo) async {
-    if (todo.isTemplate) {
-      // Create a completely separate template with different ID
-      final templateTodo = todo.copyWith(
-        id: 'template_${DateTime.now().millisecondsSinceEpoch}',
-        isTemplate: true,
-      );
-      await todoRepository.addTodo(templateTodo);
-    } else {
-      await todoRepository.addTodo(todo);
-    }
-    await loadTodos();
-  }
+    final newTodo = todo.copyWith(
+      id: 'todo_${DateTime.now().millisecondsSinceEpoch}',
+      dateCreated: DateTime.now(),
+      // Set default due date to tomorrow if not provided
+      dueDate: todo.dueDate ?? DateTime.now(),
+    );
 
-  Future<void> updateTodo(Todo todo) async {
-    await todoRepository.updateTodo(todo);
-    await loadTodos();
+    _todos.add(newTodo);
+    await _saveTodos();
+    notifyListeners();
   }
 
   Future<void> deleteTodo(String id) async {
-    // Only delete if it's not a template or if it's a template being deleted from template management
-    final todo = _todos.firstWhere((t) => t.id == id);
-    if (!todo.isTemplate) {
-      _todos.removeWhere((todo) => todo.id == id);
-      await _saveTodos();
-      notifyListeners();
-    }
+    _todos.removeWhere((todo) => todo.id == id && !todo.isTemplate);
+    await _saveTodos();
+    notifyListeners();
   }
 
-  // Add a separate method for deleting templates
   Future<void> deleteTemplate(String id) async {
     _todos.removeWhere((todo) => todo.id == id && todo.isTemplate);
     await _saveTodos();
     notifyListeners();
   }
 
-  Future<void> toggleTodo(String id) async {
-    await todoRepository.toggleTodo(id);
-    await loadTodos();
+  Future<void> toggleTodoCompletion(String id) async {
+    final index = _todos.indexWhere((todo) => todo.id == id);
+    if (index != -1) {
+      final todo = _todos[index];
+      final now = DateTime.now();
+
+      final bool newCompletedState = !todo.completed;
+
+      // If we're marking the task as completed, complete all subtasks too
+      // If we're uncompleting the task, uncomplete all subtasks too
+      final updatedSubTasks = todo.subTasks.map((st) => st.copyWith(completed: newCompletedState)).toList();
+
+      _todos[index] = todo.copyWith(
+        completed: newCompletedState,
+        completedAt: newCompletedState ? now : null,
+        subTasks: updatedSubTasks,
+      );
+
+      _saveTodos();
+      notifyListeners();
+    }
   }
 
-  Future<void> reorderTodos(int oldIndex, int newIndex) async {
-    if (oldIndex < newIndex) {
-      newIndex -= 1;
+  Future<void> updateTodo(Todo updatedTodo) async {
+    final index = _todos.indexWhere((todo) => todo.id == updatedTodo.id);
+    if (index != -1) {
+      _todos[index] = updatedTodo;
+      await _saveTodos();
+      notifyListeners();
     }
-    final Todo item = _todos.removeAt(oldIndex);
-    _todos.insert(newIndex, item);
-    await _saveTodos();
-    notifyListeners();
   }
 
   Future<void> _saveTodos() async {
-    final todosString = json.encode(_todos.map((todo) => TodoModel.fromTodo(todo).toJson()).toList());
-    // Implementation depends on your repository
+    final prefs = await SharedPreferences.getInstance();
+    final todosJson = _todos.map((todo) => _todoToJson(todo)).toList();
+    await prefs.setString('todos', json.encode(todosJson));
   }
 
-  bool isTemplateNameUnique(String name) {
-    return !_todos.any((todo) => todo.isTemplate && todo.title == name);
-  }
-
-  Future<void> addTodoFromTemplate(Todo template) async {
-    String newTitle = template.title;
-    int counter = 1;
-
-    while (_todos.any((todo) => todo.title == newTitle && !todo.isTemplate)) {
-      newTitle = '${template.title} (${counter++})';
-    }
-
-    final newTodo = template.copyWith(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      title: newTitle,
-      completed: false,
-      dateCreated: DateTime.now(),
-      isTemplate: false,
-    );
-
-    await addTodo(newTodo);
+  Map<String, dynamic> _todoToJson(Todo todo) {
+    return {
+      'id': todo.id,
+      'title': todo.title,
+      'description': todo.description,
+      'completed': todo.completed,
+      'dateCreated': todo.dateCreated.toIso8601String(),
+      'dueDate': todo.dueDate?.toIso8601String(),
+      'category': todo.category,
+      'priority': todo.priority,
+      'recurrence': todo.recurrence.index,
+      'recurrenceEndDate': todo.recurrenceEndDate?.toIso8601String(),
+      'isTemplate': todo.isTemplate,
+      'weeklyRecurrenceDays': todo.weeklyRecurrenceDays,
+      'enableReminders': todo.enableReminders,
+      'subTasks': todo.subTasks.map((st) => {
+        'id': st.id,
+        'title': st.title,
+        'completed': st.completed,
+      }).toList(),
+      'completedAt': todo.completedAt?.toIso8601String(),
+      'lastRecurrence': todo.lastRecurrence?.toIso8601String(),
+    };
   }
 
   Future<void> addCategory(String category) async {
     if (!_categories.contains(category)) {
       _categories.add(category);
+      // Set default icon and color for new category
+      _categoryIcons[category] = _getDefaultIcon(category);
+      _categoryColors[category] = _getDefaultColor(category);
+
       final prefs = await SharedPreferences.getInstance();
       await prefs.setStringList('categories', _categories);
+      await _saveCategoryStyles();
       notifyListeners();
     }
   }
@@ -203,10 +267,86 @@ class TodoProvider with ChangeNotifier {
   Future<void> loadCategories() async {
     final prefs = await SharedPreferences.getInstance();
     final savedCategories = prefs.getStringList('categories');
-    if (savedCategories != null) {
+
+    if (savedCategories != null && savedCategories.isNotEmpty) {
       _categories = savedCategories;
-      notifyListeners();
+    } else {
+      // Only set default categories if none exist
+      _categories = ['Personal', 'Work', 'Shopping', 'Health', 'Other'];
+      await prefs.setStringList('categories', _categories);
     }
+
+    // Load category icons and colors
+    final iconsJson = prefs.getString('categoryIcons');
+    final colorsJson = prefs.getString('categoryColors');
+
+    if (iconsJson != null) {
+      final Map<String, dynamic> iconsMap = json.decode(iconsJson);
+      _categoryIcons.clear();
+      iconsMap.forEach((key, value) {
+        _categoryIcons[key] = IconData(value, fontFamily: 'MaterialIcons');
+      });
+    }
+
+    if (colorsJson != null) {
+      final Map<String, dynamic> colorsMap = json.decode(colorsJson);
+      _categoryColors.clear();
+      colorsMap.forEach((key, value) {
+        _categoryColors[key] = Color(value);
+      });
+    }
+
+    // Set defaults for any missing categories
+    for (final category in _categories) {
+      if (!_categoryIcons.containsKey(category)) {
+        _categoryIcons[category] = _getDefaultIcon(category);
+      }
+      if (!_categoryColors.containsKey(category)) {
+        _categoryColors[category] = _getDefaultColor(category);
+      }
+    }
+
+    await _saveCategoryStyles(); // Ensure styles are saved
+    if (_isInitialized) notifyListeners();
+  }
+
+  IconData _getDefaultIcon(String category) {
+    switch (category.toLowerCase()) {
+      case 'personal': return Icons.person_outline;
+      case 'work': return Icons.work_outline;
+      case 'shopping': return Icons.shopping_basket;
+      case 'health': return Icons.favorite_border;
+      case 'other': return Icons.category;
+      default: return Icons.label_outline;
+    }
+  }
+
+  Color _getDefaultColor(String category) {
+    switch (category.toLowerCase()) {
+      case 'personal': return Colors.blue.shade700;
+      case 'work': return Colors.orange.shade700;
+      case 'shopping': return Colors.green.shade700;
+      case 'health': return Colors.red.shade700;
+      case 'other': return Colors.purple.shade700;
+      default: return Colors.blue.shade400;
+    }
+  }
+
+  Future<void> _saveCategoryStyles() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('categoryIcons', json.encode(
+        _categoryIcons.map((key, value) => MapEntry(key, value.codePoint))
+    ));
+    await prefs.setString('categoryColors', json.encode(
+        _categoryColors.map((key, value) => MapEntry(key, value.value))
+    ));
+  }
+
+  Future<void> updateCategoryStyle(String category, IconData icon, Color color) async {
+    _categoryIcons[category] = icon;
+    _categoryColors[category] = color;
+    await _saveCategoryStyles();
+    notifyListeners();
   }
 
   Future<void> removeCategory(String category) async {
@@ -215,8 +355,12 @@ class TodoProvider with ChangeNotifier {
     }
 
     _categories.remove(category);
+    _categoryIcons.remove(category);
+    _categoryColors.remove(category);
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList('categories', _categories);
+    await _saveCategoryStyles();
     notifyListeners();
   }
 
@@ -258,5 +402,82 @@ class TodoProvider with ChangeNotifier {
     _filterPriority = null;
     _filterDueDate = null;
     notifyListeners();
+  }
+
+  void reorderTodos(int oldIndex, int newIndex) {
+    if (oldIndex < newIndex) {
+      newIndex -= 1;
+    }
+    final Todo item = _todos.removeAt(oldIndex);
+    _todos.insert(newIndex, item);
+    _saveTodos();
+    notifyListeners();
+  }
+
+  void addTodoFromTemplate(Todo template) {
+    final newTodo = template.copyWith(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      isTemplate: false,
+      dateCreated: DateTime.now(),
+      // Set default due date to tomorrow if not provided
+      dueDate: template.dueDate ?? DateTime.now(),
+    );
+    addTodo(newTodo);
+  }
+
+  // Method to check if a category can be edited (not default)
+  bool canEditCategory(String category) {
+    final defaultCategories = ['Personal', 'Work', 'Shopping', 'Health', 'Other'];
+    return !defaultCategories.contains(category);
+  }
+
+// Method to get category edit screen
+  void navigateToCategoryManagement(BuildContext context) {
+    Navigator.pushNamed(context, '/categories');
+  }
+
+// Method to show add category dialog
+  void showAddCategoryDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        String newCategoryName = '';
+        IconData selectedIcon = Icons.label_outline;
+        Color selectedColor = Colors.blue;
+
+        return AlertDialog(
+          title: const Text('Add New Category'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                decoration: const InputDecoration(
+                  labelText: 'Category Name',
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (value) => newCategoryName = value,
+              ),
+              const SizedBox(height: 16),
+              // Add icon and color selection here if needed
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (newCategoryName.isNotEmpty) {
+                  addCategory(newCategoryName);
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
   }
 }

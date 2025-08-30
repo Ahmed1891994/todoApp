@@ -11,16 +11,16 @@ class FilterDialog extends StatefulWidget {
   final DateTime? filterDueDate;
 
   const FilterDialog({
-    Key? key,
+    super.key,
     required this.filterCategory,
     required this.sortBy,
     required this.showCompleted,
     required this.filterPriority,
     required this.filterDueDate,
-  }) : super(key: key);
+  });
 
   @override
-  _FilterDialogState createState() => _FilterDialogState();
+  State<FilterDialog> createState() => _FilterDialogState();
 }
 
 class _FilterDialogState extends State<FilterDialog> {
@@ -52,7 +52,7 @@ class _FilterDialogState extends State<FilterDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             DropdownButtonFormField<String>(
-              value: _filterCategory,
+              initialValue : _filterCategory,
               items: categories.map((String category) {
                 return DropdownMenuItem<String>(
                   value: category,
@@ -70,7 +70,7 @@ class _FilterDialogState extends State<FilterDialog> {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              value: _sortBy,
+              initialValue : _sortBy,
               items: sortOptions.map((String value) {
                 return DropdownMenuItem<String>(
                   value: value,
@@ -88,7 +88,7 @@ class _FilterDialogState extends State<FilterDialog> {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<int?>(
-              value: _filterPriority,
+              initialValue : _filterPriority,
               items: const [
                 DropdownMenuItem(value: null, child: Text('All Priorities')),
                 DropdownMenuItem(value: 0, child: Text('Low')),

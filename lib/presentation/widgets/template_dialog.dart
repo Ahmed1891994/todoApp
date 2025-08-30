@@ -4,7 +4,7 @@ import '../../../core/providers/todo_provider.dart';
 import '../../domain/entities/todo.dart';
 
 class TemplateDialog extends StatelessWidget {
-  const TemplateDialog({Key? key}) : super(key: key);
+  const TemplateDialog({super.key});
 
   @override
   Widget build(BuildContext context) {

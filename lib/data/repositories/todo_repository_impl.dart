@@ -1,5 +1,4 @@
 import 'dart:convert';
-
 import '../../domain/entities/todo.dart';
 import '../../domain/repositories/todo_repository.dart';
 import '../datasources/local_data_source.dart';
@@ -67,7 +66,11 @@ class TodoRepositoryImpl implements TodoRepository {
   }
 
   Future<void> _saveTodos(List<Todo> todos) async {
-    final todosString = json.encode(todos.map((todo) => TodoModel.fromTodo(todo).toJson()).toList());
-    await localDataSource.setString(_key, todosString);
+    try {
+      final todosString = json.encode(todos.map((todo) => TodoModel.fromTodo(todo).toJson()).toList());
+      await localDataSource.setString(_key, todosString);
+    } catch (e) {
+      print('Error saving todos: $e');
+    }
   }
 }

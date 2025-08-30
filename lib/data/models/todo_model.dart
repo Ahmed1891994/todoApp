@@ -1,5 +1,4 @@
-import 'dart:convert';
-
+import 'package:flutter/material.dart';
 import '../../domain/entities/todo.dart';
 
 class TodoModel extends Todo {
@@ -15,6 +14,10 @@ class TodoModel extends Todo {
     RecurrenceType recurrence = RecurrenceType.none,
     DateTime? recurrenceEndDate,
     bool isTemplate = false,
+    List<int> weeklyRecurrenceDays = const [],
+    bool enableReminders = false,
+    List<SubTask> subTasks = const [],
+    DateTime? completedAt,
     DateTime? lastRecurrence,
   }) : super(
     id: id,
@@ -28,6 +31,10 @@ class TodoModel extends Todo {
     recurrence: recurrence,
     recurrenceEndDate: recurrenceEndDate,
     isTemplate: isTemplate,
+    weeklyRecurrenceDays: weeklyRecurrenceDays,
+    enableReminders: enableReminders,
+    subTasks: subTasks,
+    completedAt: completedAt,
     lastRecurrence: lastRecurrence,
   );
 
@@ -36,7 +43,7 @@ class TodoModel extends Todo {
       id: json['id'],
       title: json['title'],
       description: json['description'],
-      completed: json['completed'],
+      completed: json['completed'] ?? false,
       dateCreated: DateTime.parse(json['dateCreated']),
       dueDate: json['dueDate'] != null ? DateTime.parse(json['dueDate']) : null,
       category: json['category'] ?? 'Personal',
@@ -44,6 +51,14 @@ class TodoModel extends Todo {
       recurrence: RecurrenceType.values[json['recurrence'] ?? 0],
       recurrenceEndDate: json['recurrenceEndDate'] != null ? DateTime.parse(json['recurrenceEndDate']) : null,
       isTemplate: json['isTemplate'] ?? false,
+      weeklyRecurrenceDays: List<int>.from(json['weeklyRecurrenceDays'] ?? []),
+      enableReminders: json['enableReminders'] ?? false,
+      subTasks: List<SubTask>.from((json['subTasks'] ?? []).map((st) => SubTask(
+        id: st['id'],
+        title: st['title'],
+        completed: st['completed'] ?? false,
+      ))),
+      completedAt: json['completedAt'] != null ? DateTime.parse(json['completedAt']) : null,
       lastRecurrence: json['lastRecurrence'] != null ? DateTime.parse(json['lastRecurrence']) : null,
     );
   }
@@ -61,6 +76,14 @@ class TodoModel extends Todo {
       'recurrence': recurrence.index,
       'recurrenceEndDate': recurrenceEndDate?.toIso8601String(),
       'isTemplate': isTemplate,
+      'weeklyRecurrenceDays': weeklyRecurrenceDays,
+      'enableReminders': enableReminders,
+      'subTasks': subTasks.map((st) => {
+        'id': st.id,
+        'title': st.title,
+        'completed': st.completed,
+      }).toList(),
+      'completedAt': completedAt?.toIso8601String(),
       'lastRecurrence': lastRecurrence?.toIso8601String(),
     };
   }
@@ -78,6 +101,10 @@ class TodoModel extends Todo {
       recurrence: todo.recurrence,
       recurrenceEndDate: todo.recurrenceEndDate,
       isTemplate: todo.isTemplate,
+      weeklyRecurrenceDays: todo.weeklyRecurrenceDays,
+      enableReminders: todo.enableReminders,
+      subTasks: todo.subTasks,
+      completedAt: todo.completedAt,
       lastRecurrence: todo.lastRecurrence,
     );
   }
